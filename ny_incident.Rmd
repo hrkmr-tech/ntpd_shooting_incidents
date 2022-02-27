@@ -1,0 +1,169 @@
+---
+title: "NYPD Shooting Incident Data Report"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Summary
+Which is more fatal, interracial incidents or non-interracial incidents?
+
+Conclusion: Non-interracial incidents are more fatal.
+
+## Importing Libraries
+Importing packages for this project.
+
+```{r import_packages, message=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+This section is to import the data of NYPD Shooting Incident from its website.
+```{r import_data, message=FALSE}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+datasets <- read_csv(url)
+```
+
+## Importing and Modifying Data
+I tidy and transform the data.
+```{r tidy_transform, message=TRUE}
+tidy_datasets <- datasets %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE), OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  select(INCIDENT_KEY, OCCUR_YEAR, OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE, LOCATION_DESC)
+tidy_datasets
+```
+
+## Visualizing Data
+### The Number of Shooting Incident
+The number of shooting incidents in NY had been decreasing since 2006 until 2019. But 2020 saw a rebound probably because of the COVID-19 pandemic. 
+
+```{r group_by_year}
+year_datasets <- tidy_datasets %>%
+  group_by(OCCUR_YEAR) %>%
+  summarise(COUNT = n(), .groups = "drop") %>%
+  select(OCCUR_YEAR, COUNT) %>%
+  ungroup()
+
+year_datasets %>%
+  ggplot(aes(x = OCCUR_YEAR, y = COUNT)) +
+  geom_line(aes(y = COUNT, color = "COUNT")) +
+  geom_point(aes(y = COUNT, color = "COUNT")) +
+  theme(legend.position = "right", axis.text.x = element_text(angle = 90, vjust = 1)) +
+  scale_x_continuous(labels = year_datasets$OCCUR_YEAR, breaks = year_datasets$OCCUR_YEAR) +
+  labs(title = "The Number of Shooting Incident in NY", x = "year", y = "the number of incident") +
+  expand_limits(y = 0)
+```
+### The Number of Shooting Incidents by Race
+Except "NA" and "UNKNOWN", the largest number of perpetrators and victims is "BLACK".
+
+```{r group_by_race}
+perp_race_datasets <- tidy_datasets %>%
+  select(OCCUR_YEAR, PERP_RACE) %>%
+  gather(OCCUR_YEAR, PERP_RACE) %>%
+  group_by(OCCUR_YEAR, PERP_RACE) %>%
+  count(PERP_RACE) %>%
+  spread(PERP_RACE, n)
+
+perp_race_datasets %>%
+  gather(key, value, "AMERICAN INDIAN/ALASKAN NATIVE", "ASIAN / PACIFIC ISLANDER", "BLACK", "BLACK HISPANIC", "UNKNOWN", "WHITE", "WHITE HISPANIC", "<NA>") %>%
+  ggplot(aes(x=OCCUR_YEAR, y=value, colour=key)) +
+  geom_line() +
+  theme(legend.position = "right", axis.text.x = element_text(angle = 90, vjust = 1)) +
+  scale_x_continuous(labels = year_datasets$OCCUR_YEAR, breaks = year_datasets$OCCUR_YEAR) +
+  labs(title = "The Number of Shooting Incident by Perpetrator's Race", x = "year", y = "the number of incident", colour = "race") +
+  expand_limits(y = 0)
+```
+```{r group_by_vic_race}
+vic_race_datasets <- tidy_datasets %>%
+  select(OCCUR_YEAR, VIC_RACE) %>%
+  gather(OCCUR_YEAR, VIC_RACE) %>%
+  group_by(OCCUR_YEAR, VIC_RACE) %>%
+  count(VIC_RACE) %>%
+  spread(VIC_RACE, n)
+
+vic_race_datasets %>%
+  gather(key, value, "AMERICAN INDIAN/ALASKAN NATIVE", "ASIAN / PACIFIC ISLANDER", "BLACK", "BLACK HISPANIC", "UNKNOWN", "WHITE", "WHITE HISPANIC") %>%
+  ggplot(aes(x=OCCUR_YEAR, y=value, colour=key)) +
+  geom_line() +
+  theme(legend.position = "right", axis.text.x = element_text(angle = 90, vjust = 1)) +
+  scale_x_continuous(labels = year_datasets$OCCUR_YEAR, breaks = year_datasets$OCCUR_YEAR) +
+  labs(title = "The Number of Shooting Incident by Victim's Race", x = "year", y = "the number of incident", colour = "race") +
+  expand_limits(y = 0)
+```
+The number of incidents in-between race is larger than that of not. But the data does not have a sufficient property. It shows that almost 50% of data is "NA" between 2010 and 2020.
+```{r same_race_incident}
+same_race_datasets <- tidy_datasets %>%
+  mutate(IN_BETWEEN_RACE = PERP_RACE == VIC_RACE) %>%
+  select(OCCUR_YEAR, IN_BETWEEN_RACE) %>%
+  count(OCCUR_YEAR, IN_BETWEEN_RACE) %>%
+  group_by(OCCUR_YEAR) %>%
+  mutate(pct= prop.table(n) * 100)
+
+same_race_datasets %>%
+  ggplot(aes(fill=IN_BETWEEN_RACE, y=pct, x=OCCUR_YEAR)) + 
+  geom_bar(position="fill", stat="identity")
+```
+
+### Modeling (interracial and non-interracial fatality rate)
+I created a model of interracial and non-interracial fatality rate.
+```{r modeling}
+per_thou_datasets <- tidy_datasets %>%
+  filter(!is.na(VIC_RACE)) %>%
+  filter(!is.na(PERP_RACE)) %>%
+  filter(VIC_RACE == PERP_RACE) %>%
+  group_by(OCCUR_YEAR) %>%
+  summarise(COUNT = n(), FATAL_COUNT = sum(STATISTICAL_MURDER_FLAG == TRUE), .groups = "drop") %>%
+  mutate(IN_BETWEEN_PER_THOU = FATAL_COUNT / COUNT * 1000)
+
+per_thou_interrace_datasets <- tidy_datasets %>%
+  filter(!is.na(VIC_RACE)) %>%
+  filter(!is.na(PERP_RACE)) %>%
+  filter(VIC_RACE != PERP_RACE) %>%
+  group_by(OCCUR_YEAR) %>%
+  summarise(COUNT = n(), FATAL_COUNT = sum(STATISTICAL_MURDER_FLAG == TRUE)) %>%
+  mutate(INTERRACE_PER_THOU = FATAL_COUNT / COUNT * 1000)
+
+joined <- per_thou_interrace_datasets %>%
+  full_join(per_thou_datasets, by = "OCCUR_YEAR") %>%
+  mutate(RATIO = IN_BETWEEN_PER_THOU / INTERRACE_PER_THOU)
+
+mod <- lm(FATAL_COUNT ~ COUNT, data = per_thou_datasets)
+summary(mod)
+
+interrace_mod <- lm(FATAL_COUNT ~ COUNT, data = per_thou_interrace_datasets)
+```
+
+```{r prediction}
+pred <- per_thou_datasets %>%
+  mutate(pred = predict(mod))
+
+interrace_pred <- per_thou_interrace_datasets %>%
+  mutate(pred = predict(interrace_mod))
+
+pred %>%
+  ggplot() +
+  geom_point(aes(x = COUNT, y = FATAL_COUNT), color = "blue") +
+  geom_point(aes(x = COUNT, y = pred), color = "red")
+
+interrace_pred %>%
+  ggplot() +
+  geom_point(aes(x = COUNT, y = FATAL_COUNT), color = "blue") +
+  geom_point(aes(x = COUNT, y = pred), color = "red")
+```
+
+Lastly, I calculate the ratio, non-interracial divided by interracial. if ratio is more than 1.0, it means that non-interracial is more fatal. If ratio is less than 1.0, interracial is more fatal.
+
+The red dots are actual.
+The blue line is a prediction.
+The black line is horizontally 1.0.
+
+As the graph shows, the red dots are almost alwaus above the black line. In addition, the prediction line is also above 1.0. In conclusion, non-interracial incidents are more fatal.
+
+```{r datasets}
+
+joined %>%
+  ggplot(aes(OCCUR_YEAR, RATIO)) +
+  geom_point(color = "red") +
+  stat_smooth(method = lm) +
+  geom_hline(yintercept = 1)
+```
